@@ -25,15 +25,17 @@ func (set MapperSet) Map(u *url.URL, weight int) (results ResultSet) {
 
 func (set MapperSet) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	results := set.Map(r.URL, 0)
+	sort.Stable(results)
+
+	// TODO: Move this output to some sort of configurable logging target
+	log.Printf("\"%s\" %+v", r.URL, results)
+
 	if len(results) == 0 {
 		http.Error(w, "404 page not found", http.StatusNotFound)
 		return
 	}
 
-	sort.Stable(results)
-
 	result := results[0]
-	log.Printf("\"%s\" %+v", r.URL, results)
 
 	switch result.Code {
 	case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
