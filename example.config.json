@@ -1,0 +1,44 @@
+{
+  "match": [
+    {
+      "host": ["re:.*"],
+      "path": ["/", "/apple", "/apple/"],
+      "weight": -1,
+      "code": 307,
+      "url": "https://example.com/"
+    },
+    {
+      "host": ["fabulous.example.com", "localhost", ""],
+      "match": [
+        {
+          "path": ["/favicon.ico", "/robots.txt"],
+          "code": 404
+        },
+        {
+          "path": ["/"],
+          "code": 302,
+          "url": "/apple/"
+        },
+        {
+          "path": ["re:.*/boat/?$", "re:.*/giraffe/?$"],
+          "code": 307,
+          "url": "green/"
+        },
+        {
+          "path": ["/pear/boat/green/giraffe", "re:^/delicious/tea/?$"],
+          "code": 200,
+          "weight": 1
+        },
+        {
+          "path": ["re:^/(.*?)/$"],
+          "map": {
+            "apple": {"code": 302, "url": "/pear/"},
+            "pear": {"code": 302, "url": "boat/"},
+            "pear/boat/green": {"code": 302, "url": "giraffe"},
+            "delicious": {"code": 301, "url": "tea"}
+          }
+        }
+      ]
+    }
+  ]
+}
