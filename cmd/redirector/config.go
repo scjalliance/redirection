@@ -13,7 +13,7 @@ const (
 	// DefaultDataFile is the default redirection map data file.
 	DefaultDataFile = "redirect.json"
 	// DefaultCertificateCacheDir is the default certificate cache directory.
-	DefaultCertificateCacheDir = "redirector-cache"
+	DefaultCertificateCacheDir = "cert-cache"
 	// DefaultHTTPAddr is the default HTTP listener address.
 	DefaultHTTPAddr = ":80"
 	// DefaultHTTPSAddr is the default HTTP over TLS listener address.
