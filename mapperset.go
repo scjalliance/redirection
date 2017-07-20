@@ -24,11 +24,12 @@ func (set MapperSet) Map(u *url.URL, weight int) (results ResultSet) {
 }
 
 func (set MapperSet) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	results := set.Map(r.URL, 0)
+	u := urlFromRequest(r)
+	results := set.Map(u, 0)
 	sort.Stable(results)
 
 	// TODO: Move this output to some sort of configurable logging target
-	log.Printf("\"%s\" %+v", r.URL, results)
+	log.Printf("\"%s\" %+v", u, results)
 
 	if len(results) == 0 {
 		http.Error(w, "404 page not found", http.StatusNotFound)
@@ -43,4 +44,10 @@ func (set MapperSet) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, http.StatusText(result.Code), result.Code)
 	}
+}
+
+func urlFromRequest(r *http.Request) *url.URL {
+	u := *r.URL
+	u.Host = r.Host
+	return &u
 }
