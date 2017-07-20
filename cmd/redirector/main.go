@@ -48,13 +48,13 @@ func main() {
 	// HTTP Server
 	if cfg.HTTPAddr != "" {
 		wg.Add(1)
-		go run(ctx, &wg, cfg.HTTPAddr, false, mapper, cfg.ShutdownTimeout, errchan)
+		go run(ctx, &wg, cfg.HTTPAddr, false, mapper, cfg.CertificateCacheDir, cfg.ShutdownTimeout, errchan)
 	}
 
 	// HTTPS Server
 	if cfg.HTTPSAddr != "" {
 		wg.Add(1)
-		go run(ctx, &wg, cfg.HTTPSAddr, true, mapper, cfg.ShutdownTimeout, errchan)
+		go run(ctx, &wg, cfg.HTTPSAddr, true, mapper, cfg.CertificateCacheDir, cfg.ShutdownTimeout, errchan)
 	}
 
 	go func() {
@@ -67,7 +67,7 @@ func main() {
 	wg.Wait()
 }
 
-func run(ctx context.Context, wg *sync.WaitGroup, addr string, useTLS bool, mapper redirection.Mapper, shutdownTimeout time.Duration, errchan chan<- error) {
+func run(ctx context.Context, wg *sync.WaitGroup, addr string, useTLS bool, mapper redirection.Mapper, certCacheDir string, shutdownTimeout time.Duration, errchan chan<- error) {
 	defer wg.Done()
 
 	if ctxDone(ctx) {
@@ -85,6 +85,9 @@ func run(ctx context.Context, wg *sync.WaitGroup, addr string, useTLS bool, mapp
 		m := autocert.Manager{
 			Prompt:     autocert.AcceptTOS,
 			HostPolicy: redirection.HostWhitelist(mapper),
+		}
+		if certCacheDir != "" {
+			m.Cache = autocert.DirCache(certCacheDir)
 		}
 		server.TLSConfig = &tls.Config{
 			GetCertificate: m.GetCertificate,
