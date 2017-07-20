@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -17,32 +18,18 @@ import (
 	"github.com/scjalliance/redirection"
 )
 
-const (
-	// DefaultShutdownTimeout is the default amount of time that a graceful
-	// server shutdown will be allowed
-	DefaultShutdownTimeout = time.Second
-)
-
-var (
-	config          = "redirect.json"
-	httpAddr        = ":80"
-	httpsAddr       = ":443"
-	cache           = "redirector-cache"
-	shutdownTimeout = DefaultShutdownTimeout
-)
-
 func main() {
-	flag.StringVar(&config, "config", "redirect.json", "configuration file")
-	flag.StringVar(&httpAddr, "http", httpAddr, "HTTP server listening address (blank for none)")
-	flag.StringVar(&httpsAddr, "https", httpsAddr, "HTTPS server listening address (blank for none)")
-	//flag.BoolVar(&acme, "acme", acme, "use ACME for automated certificate renewal")
-	flag.Parse()
+	cfg := DefaultConfig
+	if err := cfg.ParseEnv(); err != nil {
+		log.Fatalf("redirector: unable to parse environment: %v", err)
+	}
+	cfg.ParseArgs(os.Args[1:], flag.ExitOnError)
 
-	if httpAddr == "" && httpsAddr == "" {
-		log.Fatal("redirector: no interfaces defined: both http and https addresses are empty")
+	if cfg.HTTPAddr == "" && cfg.HTTPSAddr == "" {
+		log.Fatalf("redirector: no interfaces defined: both http and https addresses are empty")
 	}
 
-	mapper, err := load(config)
+	mapper, err := load(cfg.DataFile)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -59,64 +46,63 @@ func main() {
 	defer close(errchan)
 
 	// HTTP Server
-	if httpAddr != "" {
+	if cfg.HTTPAddr != "" {
 		wg.Add(1)
-		go run(ctx, &wg, httpAddr, false, mapper, errchan)
+		go run(ctx, &wg, cfg.HTTPAddr, false, mapper, cfg.ShutdownTimeout, errchan)
 	}
 
 	// HTTPS Server
-	if httpsAddr != "" {
+	if cfg.HTTPSAddr != "" {
 		wg.Add(1)
-		go run(ctx, &wg, httpsAddr, true, mapper, errchan)
+		go run(ctx, &wg, cfg.HTTPSAddr, true, mapper, cfg.ShutdownTimeout, errchan)
 	}
 
 	go func() {
 		for err := range errchan {
 			log.Println(err)
+			shutdown()
 		}
 	}()
 
 	wg.Wait()
 }
 
-func run(ctx context.Context, wg *sync.WaitGroup, addr string, useTLS bool, mapper redirection.Mapper, errchan chan<- error) {
+func run(ctx context.Context, wg *sync.WaitGroup, addr string, useTLS bool, mapper redirection.Mapper, shutdownTimeout time.Duration, errchan chan<- error) {
 	defer wg.Done()
 
-	handler := redirection.NewHandler(mapper)
+	if ctxDone(ctx) {
+		return
+	}
 
-	for {
-		if ctxDone(ctx) {
-			return
-		}
-
-		s := &http.Server{
+	var (
+		handler = redirection.NewHandler(mapper)
+		server  = &http.Server{
 			Handler: handler,
 		}
+	)
 
-		if useTLS {
-			m := autocert.Manager{
-				Prompt:     autocert.AcceptTOS,
-				HostPolicy: redirection.HostWhitelist(mapper),
-			}
-			s.TLSConfig = &tls.Config{
-				GetCertificate: m.GetCertificate,
-				//NextProtos:     []string{"h2", "http/1.1"}, // Enable HTTP/2
-			}
+	if useTLS {
+		m := autocert.Manager{
+			Prompt:     autocert.AcceptTOS,
+			HostPolicy: redirection.HostWhitelist(mapper),
 		}
-
-		if useTLS {
-			log.Printf("redirector: server starting on %s with TLS", addr)
-		} else {
-			log.Printf("redirector: server starting on %s", addr)
+		server.TLSConfig = &tls.Config{
+			GetCertificate: m.GetCertificate,
+			//NextProtos:     []string{"h2", "http/1.1"}, // Enable HTTP/2
 		}
-
-		err := runServer(ctx, s, useTLS)
-		errchan <- fmt.Errorf("redirector: server on %s exited: %s", addr, err)
-		time.Sleep(time.Second * 1)
 	}
+
+	if useTLS {
+		log.Printf("redirector: server starting on %s with TLS", addr)
+	} else {
+		log.Printf("redirector: server starting on %s", addr)
+	}
+
+	err := runServer(ctx, server, useTLS, shutdownTimeout)
+	errchan <- fmt.Errorf("redirector: server on %s exited: %s", addr, err)
 }
 
-func runServer(ctx context.Context, s *http.Server, useTLS bool) error {
+func runServer(ctx context.Context, s *http.Server, useTLS bool, shutdownTimeout time.Duration) error {
 	if ctxDone(ctx) {
 		return ctx.Err()
 	}
@@ -124,7 +110,7 @@ func runServer(ctx context.Context, s *http.Server, useTLS bool) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	go shutdownServer(ctx, s) // Shutdown the server if ctx is cancelled
+	go shutdownServer(ctx, s, shutdownTimeout) // Shutdown the server if ctx is cancelled
 
 	if useTLS {
 		return s.ListenAndServeTLS("", "")
@@ -132,12 +118,12 @@ func runServer(ctx context.Context, s *http.Server, useTLS bool) error {
 	return s.ListenAndServe()
 }
 
-func shutdownServer(ctx context.Context, s *http.Server) {
+func shutdownServer(ctx context.Context, s *http.Server, timeout time.Duration) {
 	// Wait a little bit to make sure the server has spun up
 	time.Sleep(time.Millisecond * 100)
 
 	<-ctx.Done()
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	s.Shutdown(shutdownCtx)
 }
@@ -145,7 +131,7 @@ func shutdownServer(ctx context.Context, s *http.Server) {
 func load(path string) (mapper redirection.Mapper, err error) {
 	contents, fileErr := ioutil.ReadFile(path)
 	if fileErr != nil {
-		return nil, fmt.Errorf("redirector: unable to read configuration file \"%s\": %v", path, fileErr)
+		return nil, fmt.Errorf("redirector: unable to read data file \"%s\": %v", path, fileErr)
 	}
 
 	// TODO: Use json.Decoder and stream the file instead of slurping?
@@ -153,7 +139,7 @@ func load(path string) (mapper redirection.Mapper, err error) {
 	var element redirection.Element
 	dataErr := json.Unmarshal(contents, &element)
 	if dataErr != nil {
-		return nil, fmt.Errorf("redirector: decoding error while parsing configuration file \"%s\": %v", path, dataErr)
+		return nil, fmt.Errorf("redirector: decoding error while parsing data file \"%s\": %v", path, dataErr)
 	}
 
 	return &element, nil
