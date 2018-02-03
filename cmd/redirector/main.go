@@ -11,14 +11,20 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"syscall"
 	"time"
 
 	"golang.org/x/crypto/acme/autocert"
 
+	"github.com/gentlemanautomaton/signaler"
 	"github.com/scjalliance/redirection"
 )
 
 func main() {
+	shutdown := signaler.New().Capture(os.Interrupt, syscall.SIGTERM)
+	defer shutdown.Wait()
+	defer shutdown.Trigger()
+
 	cfg := DefaultConfig
 	if err := cfg.ParseEnv(); err != nil {
 		log.Fatalf("redirector: unable to parse environment: %v", err)
@@ -34,12 +40,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ctx, shutdown := context.WithCancel(context.Background())
-	defer shutdown()
-	go func() {
-		waitForSignal()
-		shutdown()
-	}()
+	ctx := shutdown.Context()
 
 	var wg sync.WaitGroup
 	errchan := make(chan error)
@@ -60,7 +61,7 @@ func main() {
 	go func() {
 		for err := range errchan {
 			log.Println(err)
-			shutdown()
+			shutdown.Trigger()
 		}
 	}()
 
