@@ -77,6 +77,7 @@ func run(ctx context.Context, wg *sync.WaitGroup, addr string, useTLS bool, mapp
 	var (
 		handler = redirection.NewHandler(mapper)
 		server  = &http.Server{
+			Addr:    addr,
 			Handler: handler,
 		}
 	)
