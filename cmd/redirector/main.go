@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -90,10 +89,7 @@ func run(ctx context.Context, wg *sync.WaitGroup, addr string, useTLS bool, mapp
 		if certCacheDir != "" {
 			m.Cache = autocert.DirCache(certCacheDir)
 		}
-		server.TLSConfig = &tls.Config{
-			GetCertificate: m.GetCertificate,
-			//NextProtos:     []string{"h2", "http/1.1"}, // Enable HTTP/2
-		}
+		server.TLSConfig = m.TLSConfig()
 	}
 
 	if useTLS {
